@@ -355,6 +355,7 @@ namespace gr
             volk_32f_accumulator_s32f(&energy_chirp, &magsq_chirp[0], m_number_of_bins * length);
             return energy_chirp / m_number_of_bins / length;
         }
+
         float frame_sync_impl::determine_snr(const gr_complex *samples)
         {
             double tot_en = 0;
@@ -385,6 +386,70 @@ namespace gr
             int max_idx = std::distance(std::begin(fft_mag), std::max_element(std::begin(fft_mag), std::end(fft_mag)));
             float sig_en = fft_mag[max_idx];
             return 10 * log10(sig_en / (tot_en - sig_en));
+        }        
+
+        float frame_sync_impl::determine_sig(const gr_complex *samples)
+        {
+            double tot_en = 0;
+            std::vector<float> fft_mag(m_number_of_bins);
+            std::vector<gr_complex> dechirped(m_number_of_bins);
+
+            kiss_fft_cfg cfg = kiss_fft_alloc(m_number_of_bins, 0, 0, 0);
+
+            // Multiply with ideal downchirp
+            volk_32fc_x2_multiply_32fc(&dechirped[0], samples, &m_downchirp[0], m_number_of_bins);
+
+            for (uint32_t i = 0; i < m_number_of_bins; i++)
+            {
+                cx_in[i].r = dechirped[i].real();
+                cx_in[i].i = dechirped[i].imag();
+            }
+            // do the FFT
+            kiss_fft(cfg, cx_in, cx_out);
+
+            // Get magnitude
+            for (uint32_t i = 0u; i < m_number_of_bins; i++)
+            {
+                fft_mag[i] = cx_out[i].r * cx_out[i].r + cx_out[i].i * cx_out[i].i;
+                tot_en += fft_mag[i];
+            }
+            free(cfg);
+
+            int max_idx = std::distance(std::begin(fft_mag), std::max_element(std::begin(fft_mag), std::end(fft_mag)));
+            float sig_en = fft_mag[max_idx];
+            return 10 * log10(sig_en);
+        }
+
+        float frame_sync_impl::determine_noise(const gr_complex *samples)
+        {
+            double tot_en = 0;
+            std::vector<float> fft_mag(m_number_of_bins);
+            std::vector<gr_complex> dechirped(m_number_of_bins);
+
+            kiss_fft_cfg cfg = kiss_fft_alloc(m_number_of_bins, 0, 0, 0);
+
+            // Multiply with ideal downchirp
+            volk_32fc_x2_multiply_32fc(&dechirped[0], samples, &m_downchirp[0], m_number_of_bins);
+
+            for (uint32_t i = 0; i < m_number_of_bins; i++)
+            {
+                cx_in[i].r = dechirped[i].real();
+                cx_in[i].i = dechirped[i].imag();
+            }
+            // do the FFT
+            kiss_fft(cfg, cx_in, cx_out);
+
+            // Get magnitude
+            for (uint32_t i = 0u; i < m_number_of_bins; i++)
+            {
+                fft_mag[i] = cx_out[i].r * cx_out[i].r + cx_out[i].i * cx_out[i].i;
+                tot_en += fft_mag[i];
+            }
+            free(cfg);
+
+            int max_idx = std::distance(std::begin(fft_mag), std::max_element(std::begin(fft_mag), std::end(fft_mag)));
+            float sig_en = fft_mag[max_idx];
+            return 10 * log10((tot_en - sig_en));
         }
 
         void frame_sync_impl::noise_est_handler(pmt::pmt_t noise_est)
@@ -676,11 +741,17 @@ namespace gr
                     volk_32fc_x2_multiply_32fc(&corr_preamb[0], &corr_preamb[0], &sfo_corr_vect[0], (m_n_up_req + additional_upchirps) * m_number_of_bins);
 
                     float snr_est = 0;
+                    float sig_est = 0;
+                    float noise_est = 0;
                     for (int i = 0; i < up_symb_to_use; i++)
                     {
                         snr_est += determine_snr(&corr_preamb[i * m_number_of_bins]);
+                        sig_est += determine_sig(&corr_preamb[i * m_number_of_bins]);
+                        noise_est += determine_noise(&corr_preamb[i * m_number_of_bins]);                                            
                     }
                     snr_est /= up_symb_to_use;
+                    sig_est /= up_symb_to_use;
+                    noise_est /= up_symb_to_use;
 
                     // update sto_frac to its value at the beginning of the net id
                     m_sto_frac += sfo_hat * m_preamb_len;
@@ -824,17 +895,22 @@ namespace gr
                             float sto_log = k_hat - m_cfo_int + m_sto_frac;
                             float srn_log = snr_est;
                             float sfo_log = sfo_hat;
+                            float sig_log = sig_est;
+                            float noise_log = noise_est;
 
                             sync_log_out[0] = srn_log;
-                            sync_log_out[1] = cfo_log;
-                            sync_log_out[2] = sto_log;
-                            sync_log_out[3] = sfo_log;
-                            sync_log_out[4] = off_by_one_id;
-                            produce(1, 5);
+                            sync_log_out[1] = sig_log;
+                            sync_log_out[2] = noise_log;
+                            sync_log_out[3] = cfo_log;
+                            sync_log_out[4] = sto_log;
+                            sync_log_out[5] = sfo_log;
+                            sync_log_out[6] = off_by_one_id;
+                            produce(1, 7);
+                            //produce(1, 5);
                         }
 #ifdef PRINT_INFO
 
-                        std::cout << "[frame_sync_impl.cc] " << frame_cnt << " CFO estimate: " << m_cfo_int + m_cfo_frac << ", STO estimate: " << k_hat - m_cfo_int + m_sto_frac << " snr est: " << snr_est << std::endl;
+                        std::cout << "[frame_sync_impl.cc] " << frame_cnt << " CFO estimate: " << m_cfo_int + m_cfo_frac << ", STO estimate: " << k_hat - m_cfo_int + m_sto_frac << " snr est: " << snr_est << " sig est: " << sig_est << " noise est: " << noise_est << std::endl;
 #endif
                     }
                 }

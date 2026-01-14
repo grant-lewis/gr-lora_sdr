@@ -84,5 +84,5 @@ documentation: |-
 
         Output:
             out: stream of complex samples with tags indicating the beginning of the header and preamble part of each frame alongside all information necessary to the demodulation, such as: spreading factor, coding rate, payload length, CRC presence, CFO estimate, and usage of LDRO.
-            log: (Optional) Output the estimated value of SNR, CFO, STO, SFO, Off-by-one as a stream of float. Those values can be logged by a file_sink and read in an external application (MATLAB, Python, ...)
+            log: (Optional) Output the estimated value of SNR, Signal Power (a.u.), Noise Power (a.u.), CFO, STO, SFO, Off-by-one as a stream of float. Those values can be logged by a file_sink and read in an external application (MATLAB, Python, ...)
 file_format: 1
