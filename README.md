@@ -7,6 +7,10 @@
 
 
 ## Summary
+This fork modifies gr-lora_sdr to (1) extend the SNR estimation to compute a multi-bin SNR, where signal energy is summed over the strongest FFT bins instead of only the single peak bin; both single-bin (original) and multi-bin SNR values are now reported in the synchronization log output. (2) It also exposes the complex FFT of the first dechirped preamble symbol on an additional output port.
+
+## gr-lora_sdr
+See: https://github.com/tapparelj/gr-lora_sdr
 This is the fully-functional GNU Radio software-defined radio (SDR) implementation of a LoRa transceiver with all the necessary receiver components to operate correctly even at very low SNRs. The transceiver is available as a module for GNU Radio 3.10. This work has been conducted at the Telecommunication Circuits Laboratory, EPFL. 
 
 In the GNU Radio implementation of the LoRa Tx and Rx chains the user can choose all the parameters of the transmission, such as the spreading factor, the coding rate, the bandwidth, the sync word, the presence of an explicit header and CRC.
