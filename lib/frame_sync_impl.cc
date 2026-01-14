@@ -356,54 +356,83 @@ namespace gr
             return energy_chirp / m_number_of_bins / length;
         }
 
-        std::pair<float,float> frame_sync_impl::sig_noise_en(const gr_complex *samples)
+        // Helper: sum energy in strongest n_strong_bins FFT bins
+        std::pair<float,float>
+        frame_sync_impl::sig_noise_en(const gr_complex *samples, int n_strong_bins)
         {
-            double tot_en = 0;
-            std::vector<float> fft_mag(m_number_of_bins);
-            std::vector<gr_complex> dechirped(m_number_of_bins);
+            if (n_strong_bins < 1)
+                n_strong_bins = 1;
+            if (n_strong_bins > (int)m_number_of_bins)
+                n_strong_bins = m_number_of_bins;
+
+            double tot_en = 0.0;
+            std::vector<float>        fft_mag(m_number_of_bins);
+            std::vector<gr_complex>   dechirped(m_number_of_bins);
 
             kiss_fft_cfg cfg = kiss_fft_alloc(m_number_of_bins, 0, 0, 0);
 
+            // Dechirp
             volk_32fc_x2_multiply_32fc(&dechirped[0], samples, &m_downchirp[0], m_number_of_bins);
 
+            // Prepare FFT input
             for (uint32_t i = 0; i < m_number_of_bins; i++) {
                 cx_in[i].r = dechirped[i].real();
                 cx_in[i].i = dechirped[i].imag();
             }
 
+            // FFT
             kiss_fft(cfg, cx_in, cx_out);
 
+            // Magnitude^2 and total energy
             for (uint32_t i = 0u; i < m_number_of_bins; i++) {
                 fft_mag[i] = cx_out[i].r * cx_out[i].r + cx_out[i].i * cx_out[i].i;
-                tot_en += fft_mag[i];
+                tot_en    += fft_mag[i];
             }
             free(cfg);
 
-            int max_idx = std::distance(fft_mag.begin(),
-                                        std::max_element(fft_mag.begin(), fft_mag.end()));
-            float sig_en   = fft_mag[max_idx];
-            float noise_en = tot_en - sig_en;
-            return {sig_en, noise_en};
+            // Sum energy in strongest n_strong_bins bins
+            // Copy indices 0..N-1 into a vector, sort by fft_mag desc, take top n_strong_bins
+            std::vector<uint32_t> idx(m_number_of_bins);
+            std::iota(idx.begin(), idx.end(), 0u);
+
+            std::partial_sort(
+                idx.begin(),
+                idx.begin() + n_strong_bins,
+                idx.end(),
+                [&](uint32_t a, uint32_t b) { return fft_mag[a] > fft_mag[b]; });
+
+            double sig_en = 0.0;
+            for (int k = 0; k < n_strong_bins; ++k) {
+                sig_en += fft_mag[idx[k]];
+            }
+
+            double noise_en = tot_en - sig_en;
+            if (noise_en <= 0.0)
+                noise_en = std::numeric_limits<float>::min(); // avoid division by zero later
+
+            return {static_cast<float>(sig_en), static_cast<float>(noise_en)};
         }
 
-        float frame_sync_impl::determine_snr(const gr_complex *samples)
+        float frame_sync_impl::determine_snr(const gr_complex *samples, int n_strong_bins)
         {
-            auto [sig_en, noise_en] = sig_noise_en(samples);
-            return 10 * log10(sig_en / noise_en);
+            auto sig_noise = sig_noise_en(samples, n_strong_bins);
+            float sig_en   = sig_noise.first;
+            float noise_en = sig_noise.second;
+            return 10.0f * log10f(sig_en / noise_en);
         }
 
-        float frame_sync_impl::determine_sig(const gr_complex *samples)
+        float frame_sync_impl::determine_sig(const gr_complex *samples, int n_strong_bins)
         {
-            auto [sig_en, noise_en] = sig_noise_en(samples);
-            (void)noise_en;
-            return 10 * log10(sig_en);
+            auto sig_noise = sig_noise_en(samples, n_strong_bins);
+            float sig_en   = sig_noise.first;
+            return 10.0f * log10f(sig_en);
         }
 
-        float frame_sync_impl::determine_noise(const gr_complex *samples)
+        float frame_sync_impl::determine_noise(const gr_complex *samples, int n_strong_bins)
         {
-            auto [sig_en, noise_en] = sig_noise_en(samples);
-            (void)sig_en;
-            return 10 * log10(noise_en);
+            auto sig_noise = sig_noise_en(samples, n_strong_bins);
+            float noise_en = sig_noise.second;
+            return 10.0f * log10f(noise_en);
         }
 
         void frame_sync_impl::noise_est_handler(pmt::pmt_t noise_est)
@@ -525,7 +554,7 @@ namespace gr
             {
                 bin_idx_new = get_symbol_val(&in_down[0], &m_downchirp[0]);
 
-                if (abs(mod(abs(bin_idx_new - bin_idx) + 1, m_number_of_bins) - 1) <= 1 && bin_idx_new != -1) // look for consecutive reference upchirps(with a margin of ±1)
+                if (abs(mod(abs(bin_idx_new - bin_idx) + 1, m_number_of_bins) - 1) <= 1 && bin_idx_new != -1) // look for consecutive reference upchirps(with a margin of Â±1)
                 {
                     if (symbol_cnt == 1 && bin_idx != -1)
                         preamb_up_vals[0] = bin_idx;
@@ -699,13 +728,26 @@ namespace gr
                     float noise_est = 0;
                     for (int i = 0; i < up_symb_to_use; i++)
                     {
-                        snr_est += determine_snr(&corr_preamb[i * m_number_of_bins]);
-                        sig_est += determine_sig(&corr_preamb[i * m_number_of_bins]);
-                        noise_est += determine_noise(&corr_preamb[i * m_number_of_bins]);                                            
+                        snr_est += determine_snr(&corr_preamb[i * m_number_of_bins],1);
+                        sig_est += determine_sig(&corr_preamb[i * m_number_of_bins],1);
+                        noise_est += determine_noise(&corr_preamb[i * m_number_of_bins],1);                                            
                     }
                     snr_est /= up_symb_to_use;
                     sig_est /= up_symb_to_use;
                     noise_est /= up_symb_to_use;
+
+                    float multibin_snr_est = 0;
+                    float multibin_sig_est = 0;
+                    float multibin_noise_est = 0;
+                    for (int i = 0; i < up_symb_to_use; i++)
+                    {
+                        multibin_snr_est += determine_snr(&corr_preamb[i * m_number_of_bins],3);
+                        multibin_sig_est += determine_sig(&corr_preamb[i * m_number_of_bins],3);
+                        multibin_noise_est += determine_noise(&corr_preamb[i * m_number_of_bins],3);                                            
+                    }
+                    multibin_snr_est /= up_symb_to_use;
+                    multibin_sig_est /= up_symb_to_use;
+                    multibin_noise_est /= up_symb_to_use;
 
                     // update sto_frac to its value at the beginning of the net id
                     m_sto_frac += sfo_hat * m_preamb_len;
@@ -842,7 +884,7 @@ namespace gr
 
                             for (int i = 0; i < up_symb_to_use; i++)
                             {
-                                snr_est2 += determine_snr(&preamble_upchirps[i * m_number_of_bins]);
+                                snr_est2 += determine_snr(&preamble_upchirps[i * m_number_of_bins],1);
                             }
                             snr_est2 /= up_symb_to_use;
                             float cfo_log = m_cfo_int + m_cfo_frac;
@@ -851,16 +893,21 @@ namespace gr
                             float sfo_log = sfo_hat;
                             float sig_log = sig_est;
                             float noise_log = noise_est;
+                            float multibin_srn_log = multibin_snr_est;
+                            float multibin_sig_log = multibin_sig_est;
+                            float multibin_noise_log = multibin_noise_est;
 
                             sync_log_out[0] = srn_log;
                             sync_log_out[1] = sig_log;
                             sync_log_out[2] = noise_log;
-                            sync_log_out[3] = cfo_log;
-                            sync_log_out[4] = sto_log;
-                            sync_log_out[5] = sfo_log;
-                            sync_log_out[6] = off_by_one_id;
-                            produce(1, 7);
-                            //produce(1, 5);
+                            sync_log_out[3] = multibin_srn_log;
+                            sync_log_out[4] = multibin_sig_log;
+                            sync_log_out[5] = multibin_noise_log;
+                            sync_log_out[6] = cfo_log;
+                            sync_log_out[7] = sto_log;
+                            sync_log_out[8] = sfo_log;
+                            sync_log_out[9] = off_by_one_id;
+                            produce(1, 10);
                         }
 #ifdef PRINT_INFO
 

@@ -10,6 +10,8 @@
 #include <volk/volk.h>
 #include <gnuradio/lora_sdr/utilities.h>
 #include <gnuradio/io_signature.h>
+#include <utility>   // near top of the header if not present
+
 extern "C"
 {
 #include "kiss_fft.h"
@@ -168,9 +170,11 @@ namespace gr
           */
       void set_sf(int sf);
 
-      float determine_snr(const gr_complex *samples);
-      float determine_sig(const gr_complex *samples);
-      float determine_noise(const gr_complex *samples);
+      std::pair<float, float> sig_noise_en(const gr_complex *samples, int n_strong_bins);
+
+      float determine_snr(const gr_complex *samples, int n_strong_bins);
+      float determine_sig(const gr_complex *samples, int n_strong_bins);
+      float determine_noise(const gr_complex *samples, int n_strong_bins);
 
     public:
       frame_sync_impl(uint32_t center_freq, uint32_t bandwidth, uint8_t sf, bool impl_head, std::vector<uint16_t> sync_word, uint8_t os_factor, uint16_t preamb_len);
