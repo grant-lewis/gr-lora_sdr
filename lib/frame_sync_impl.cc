@@ -422,18 +422,18 @@ namespace gr
             return {static_cast<float>(sig_en), static_cast<float>(noise_en)};
         }
 
-        // Helper: sum energy in strongest n_strong_bins FFT bins
+        // Helper: sum energy in first/last n_strong_bins FFT bins
         std::pair<float,float>
         frame_sync_impl::sig_noise_en(const gr_complex *samples, int n_strong_bins)
         {
             if (n_strong_bins < 1)
                 n_strong_bins = 1;
-            if (n_strong_bins > (int)m_number_of_bins)
-                n_strong_bins = m_number_of_bins;
+            if (n_strong_bins > (int)m_number_of_bins/2)
+                n_strong_bins = m_number_of_bins/2;
 
             double tot_en = 0.0;
-            std::vector<float>        fft_mag(m_number_of_bins);
-            std::vector<gr_complex>   dechirped(m_number_of_bins);
+            std::vector<float>      fft_mag(m_number_of_bins);
+            std::vector<gr_complex> dechirped(m_number_of_bins);
 
             kiss_fft_cfg cfg = kiss_fft_alloc(m_number_of_bins, 0, 0, 0);
 
@@ -452,24 +452,17 @@ namespace gr
             // Magnitude^2 and total energy
             for (uint32_t i = 0u; i < m_number_of_bins; i++) {
                 fft_mag[i] = cx_out[i].r * cx_out[i].r + cx_out[i].i * cx_out[i].i;
-                tot_en    += fft_mag[i];
+                tot_en     += fft_mag[i];
             }
             free(cfg);
 
-            // Sum energy in strongest n_strong_bins bins
-            // Copy indices 0..N-1 into a vector, sort by fft_mag desc, take top n_strong_bins
-            std::vector<uint32_t> idx(m_number_of_bins);
-            std::iota(idx.begin(), idx.end(), 0u);
-
-            std::partial_sort(
-                idx.begin(),
-                idx.begin() + n_strong_bins,
-                idx.end(),
-                [&](uint32_t a, uint32_t b) { return fft_mag[a] > fft_mag[b]; });
-
+            // Sum energy in first n_strong_bins and last n_strong_bins bins
             double sig_en = 0.0;
             for (int k = 0; k < n_strong_bins; ++k) {
-                sig_en += fft_mag[idx[k]];
+                sig_en += fft_mag[k];  // first bins
+            }
+            for (int k = 0; k < n_strong_bins; ++k) {
+                sig_en += fft_mag[m_number_of_bins - 1 - k];  // last bins
             }
 
             double noise_en = tot_en - sig_en;
@@ -478,6 +471,7 @@ namespace gr
 
             return {static_cast<float>(sig_en), static_cast<float>(noise_en)};
         }
+
 
         float frame_sync_impl::determine_snr(const gr_complex *samples, int n_strong_bins)
         {
@@ -815,9 +809,9 @@ namespace gr
                     float multibin_noise_est = 0;
                     for (int i = 0; i < up_symb_to_use; i++)
                     {
-                        multibin_snr_est += determine_snr(&corr_preamb[i * m_number_of_bins],128);
-                        multibin_sig_est += determine_sig(&corr_preamb[i * m_number_of_bins],128);
-                        multibin_noise_est += determine_noise(&corr_preamb[i * m_number_of_bins],128);                                            
+                        multibin_snr_est += determine_snr(&corr_preamb[i * m_number_of_bins],512);
+                        multibin_sig_est += determine_sig(&corr_preamb[i * m_number_of_bins],512);
+                        multibin_noise_est += determine_noise(&corr_preamb[i * m_number_of_bins],512);                                            
                     }
                     multibin_snr_est /= up_symb_to_use;
                     multibin_sig_est /= up_symb_to_use;
