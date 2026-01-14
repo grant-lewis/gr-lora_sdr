@@ -25,7 +25,8 @@ namespace gr
         frame_sync_impl::frame_sync_impl(uint32_t center_freq, uint32_t bandwidth, uint8_t sf, bool impl_head, std::vector<uint16_t> sync_word, uint8_t os_factor, uint16_t preamble_len)
             : gr::block("frame_sync",
                         gr::io_signature::make(1, 1, sizeof(gr_complex)),
-                        gr::io_signature::make2(1, 2, sizeof(gr_complex), sizeof(float)))
+                        gr::io_signature::make3(1, 3, sizeof(gr_complex), sizeof(float), sizeof(gr_complex))
+            )
         {
             m_state = DETECT;
             m_center_freq = center_freq;
@@ -356,6 +357,71 @@ namespace gr
             return energy_chirp / m_number_of_bins / length;
         }
 
+        std::pair<float,float>
+        frame_sync_impl::sig_noise_en_with_fft_output(const gr_complex *samples, 
+                                                    int n_strong_bins,
+                                                    std::vector<gr_complex> *fft_out)
+        {
+            if (n_strong_bins < 1)
+                n_strong_bins = 1;
+            if (n_strong_bins > (int)m_number_of_bins)
+                n_strong_bins = m_number_of_bins;
+
+            double tot_en = 0.0;
+            std::vector<float>        fft_mag(m_number_of_bins);
+            std::vector<gr_complex>   dechirped(m_number_of_bins);
+
+            kiss_fft_cfg cfg = kiss_fft_alloc(m_number_of_bins, 0, 0, 0);
+
+            // Dechirp
+            volk_32fc_x2_multiply_32fc(&dechirped[0], samples, &m_downchirp[0], m_number_of_bins);
+
+            // Prepare FFT input
+            for (uint32_t i = 0; i < m_number_of_bins; i++) {
+                cx_in[i].r = dechirped[i].real();
+                cx_in[i].i = dechirped[i].imag();
+            }
+
+            // FFT
+            kiss_fft(cfg, cx_in, cx_out);
+
+            // Store FFT output as complex vector if output pointer provided
+            if (fft_out != nullptr) {
+                fft_out->resize(m_number_of_bins);
+                for (uint32_t i = 0; i < m_number_of_bins; i++) {
+                    (*fft_out)[i] = gr_complex(cx_out[i].r, cx_out[i].i);
+                }
+            }
+
+            // Magnitude^2 and total energy
+            for (uint32_t i = 0u; i < m_number_of_bins; i++) {
+                fft_mag[i] = cx_out[i].r * cx_out[i].r + cx_out[i].i * cx_out[i].i;
+                tot_en    += fft_mag[i];
+            }
+            free(cfg);
+
+            // Sum energy in strongest n_strong_bins bins
+            std::vector<uint32_t> idx(m_number_of_bins);
+            std::iota(idx.begin(), idx.end(), 0u);
+
+            std::partial_sort(
+                idx.begin(),
+                idx.begin() + n_strong_bins,
+                idx.end(),
+                [&](uint32_t a, uint32_t b) { return fft_mag[a] > fft_mag[b]; });
+
+            double sig_en = 0.0;
+            for (int k = 0; k < n_strong_bins; ++k) {
+                sig_en += fft_mag[idx[k]];
+            }
+
+            double noise_en = tot_en - sig_en;
+            if (noise_en <= 0.0)
+                noise_en = std::numeric_limits<float>::min();
+
+            return {static_cast<float>(sig_en), static_cast<float>(noise_en)};
+        }
+
         // Helper: sum energy in strongest n_strong_bins FFT bins
         std::pair<float,float>
         frame_sync_impl::sig_noise_en(const gr_complex *samples, int n_strong_bins)
@@ -514,7 +580,7 @@ namespace gr
             }
 
             float *sync_log_out = NULL;
-            if (output_items.size() == 2)
+            if (output_items.size() >= 2)
             {
                 sync_log_out = (float *)output_items[1];
                 m_should_log = true;
@@ -723,11 +789,19 @@ namespace gr
                     // //apply sfo correction
                     volk_32fc_x2_multiply_32fc(&corr_preamb[0], &corr_preamb[0], &sfo_corr_vect[0], (m_n_up_req + additional_upchirps) * m_number_of_bins);
 
+                    // Replace this section (around line where snr_est is computed):
                     float snr_est = 0;
                     float sig_est = 0;
                     float noise_est = 0;
                     for (int i = 0; i < up_symb_to_use; i++)
                     {
+                        if (i == 0) {
+                            // Capture FFT of first preamble symbol
+                            sig_noise_en_with_fft_output(&corr_preamb[i * m_number_of_bins], 1, &fft_first_preamb);
+                        } else {
+                            sig_noise_en(&corr_preamb[i * m_number_of_bins], 1);
+                        }
+                        
                         snr_est += determine_snr(&corr_preamb[i * m_number_of_bins],1);
                         sig_est += determine_sig(&corr_preamb[i * m_number_of_bins],1);
                         noise_est += determine_noise(&corr_preamb[i * m_number_of_bins],1);                                            
@@ -741,9 +815,9 @@ namespace gr
                     float multibin_noise_est = 0;
                     for (int i = 0; i < up_symb_to_use; i++)
                     {
-                        multibin_snr_est += determine_snr(&corr_preamb[i * m_number_of_bins],3);
-                        multibin_sig_est += determine_sig(&corr_preamb[i * m_number_of_bins],3);
-                        multibin_noise_est += determine_noise(&corr_preamb[i * m_number_of_bins],3);                                            
+                        multibin_snr_est += determine_snr(&corr_preamb[i * m_number_of_bins],128);
+                        multibin_sig_est += determine_sig(&corr_preamb[i * m_number_of_bins],128);
+                        multibin_noise_est += determine_noise(&corr_preamb[i * m_number_of_bins],128);                                            
                     }
                     multibin_snr_est /= up_symb_to_use;
                     multibin_sig_est /= up_symb_to_use;
@@ -909,6 +983,21 @@ namespace gr
                             sync_log_out[9] = off_by_one_id;
                             produce(1, 10);
                         }
+                        // Output FFT of first preamble symbol on port 2
+                        // In SYNC state, after SNR estimation, output the FFT samples
+
+                        if (output_items.size() >= 3) {
+                            gr_complex *fft_out_port = (gr_complex *)output_items[2];
+                            int items_available = noutput_items;  // Check available space
+                            
+                            if (!fft_first_preamb.empty() && items_available >= (int)m_number_of_bins) {
+                                // Copy all FFT samples to output port 2
+                                memcpy(fft_out_port, &fft_first_preamb[0], 
+                                    m_number_of_bins * sizeof(gr_complex));
+                                produce(2, m_number_of_bins);
+                            }
+                        }
+
 #ifdef PRINT_INFO
 
                         std::cout << "[frame_sync_impl.cc] " << frame_cnt << " CFO estimate: " << m_cfo_int + m_cfo_frac << ", STO estimate: " << k_hat - m_cfo_int + m_sto_frac << " snr est: " << snr_est << " sig est: " << sig_est << " noise est: " << noise_est << std::endl;

@@ -171,7 +171,8 @@ namespace gr
       void set_sf(int sf);
 
       std::pair<float, float> sig_noise_en(const gr_complex *samples, int n_strong_bins);
-
+      std::vector<gr_complex> fft_first_preamb;
+      std::pair<float,float> sig_noise_en_with_fft_output(const gr_complex *samples, int n_strong_bins, std::vector<gr_complex> *fft_out);
       float determine_snr(const gr_complex *samples, int n_strong_bins);
       float determine_sig(const gr_complex *samples, int n_strong_bins);
       float determine_noise(const gr_complex *samples, int n_strong_bins);
