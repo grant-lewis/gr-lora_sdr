@@ -356,7 +356,7 @@ namespace gr
             return energy_chirp / m_number_of_bins / length;
         }
 
-        float frame_sync_impl::determine_snr(const gr_complex *samples)
+        std::pair<float,float> frame_sync_impl::sig_noise_en(const gr_complex *samples)
         {
             double tot_en = 0;
             std::vector<float> fft_mag(m_number_of_bins);
@@ -364,92 +364,46 @@ namespace gr
 
             kiss_fft_cfg cfg = kiss_fft_alloc(m_number_of_bins, 0, 0, 0);
 
-            // Multiply with ideal downchirp
             volk_32fc_x2_multiply_32fc(&dechirped[0], samples, &m_downchirp[0], m_number_of_bins);
 
-            for (uint32_t i = 0; i < m_number_of_bins; i++)
-            {
+            for (uint32_t i = 0; i < m_number_of_bins; i++) {
                 cx_in[i].r = dechirped[i].real();
                 cx_in[i].i = dechirped[i].imag();
             }
-            // do the FFT
+
             kiss_fft(cfg, cx_in, cx_out);
 
-            // Get magnitude
-            for (uint32_t i = 0u; i < m_number_of_bins; i++)
-            {
+            for (uint32_t i = 0u; i < m_number_of_bins; i++) {
                 fft_mag[i] = cx_out[i].r * cx_out[i].r + cx_out[i].i * cx_out[i].i;
                 tot_en += fft_mag[i];
             }
             free(cfg);
 
-            int max_idx = std::distance(std::begin(fft_mag), std::max_element(std::begin(fft_mag), std::end(fft_mag)));
-            float sig_en = fft_mag[max_idx];
-            return 10 * log10(sig_en / (tot_en - sig_en));
-        }        
+            int max_idx = std::distance(fft_mag.begin(),
+                                        std::max_element(fft_mag.begin(), fft_mag.end()));
+            float sig_en   = fft_mag[max_idx];
+            float noise_en = tot_en - sig_en;
+            return {sig_en, noise_en};
+        }
+
+        float frame_sync_impl::determine_snr(const gr_complex *samples)
+        {
+            auto [sig_en, noise_en] = sig_noise_en(samples);
+            return 10 * log10(sig_en / noise_en);
+        }
 
         float frame_sync_impl::determine_sig(const gr_complex *samples)
         {
-            double tot_en = 0;
-            std::vector<float> fft_mag(m_number_of_bins);
-            std::vector<gr_complex> dechirped(m_number_of_bins);
-
-            kiss_fft_cfg cfg = kiss_fft_alloc(m_number_of_bins, 0, 0, 0);
-
-            // Multiply with ideal downchirp
-            volk_32fc_x2_multiply_32fc(&dechirped[0], samples, &m_downchirp[0], m_number_of_bins);
-
-            for (uint32_t i = 0; i < m_number_of_bins; i++)
-            {
-                cx_in[i].r = dechirped[i].real();
-                cx_in[i].i = dechirped[i].imag();
-            }
-            // do the FFT
-            kiss_fft(cfg, cx_in, cx_out);
-
-            // Get magnitude
-            for (uint32_t i = 0u; i < m_number_of_bins; i++)
-            {
-                fft_mag[i] = cx_out[i].r * cx_out[i].r + cx_out[i].i * cx_out[i].i;
-                tot_en += fft_mag[i];
-            }
-            free(cfg);
-
-            int max_idx = std::distance(std::begin(fft_mag), std::max_element(std::begin(fft_mag), std::end(fft_mag)));
-            float sig_en = fft_mag[max_idx];
+            auto [sig_en, noise_en] = sig_noise_en(samples);
+            (void)noise_en;
             return 10 * log10(sig_en);
         }
 
         float frame_sync_impl::determine_noise(const gr_complex *samples)
         {
-            double tot_en = 0;
-            std::vector<float> fft_mag(m_number_of_bins);
-            std::vector<gr_complex> dechirped(m_number_of_bins);
-
-            kiss_fft_cfg cfg = kiss_fft_alloc(m_number_of_bins, 0, 0, 0);
-
-            // Multiply with ideal downchirp
-            volk_32fc_x2_multiply_32fc(&dechirped[0], samples, &m_downchirp[0], m_number_of_bins);
-
-            for (uint32_t i = 0; i < m_number_of_bins; i++)
-            {
-                cx_in[i].r = dechirped[i].real();
-                cx_in[i].i = dechirped[i].imag();
-            }
-            // do the FFT
-            kiss_fft(cfg, cx_in, cx_out);
-
-            // Get magnitude
-            for (uint32_t i = 0u; i < m_number_of_bins; i++)
-            {
-                fft_mag[i] = cx_out[i].r * cx_out[i].r + cx_out[i].i * cx_out[i].i;
-                tot_en += fft_mag[i];
-            }
-            free(cfg);
-
-            int max_idx = std::distance(std::begin(fft_mag), std::max_element(std::begin(fft_mag), std::end(fft_mag)));
-            float sig_en = fft_mag[max_idx];
-            return 10 * log10((tot_en - sig_en));
+            auto [sig_en, noise_en] = sig_noise_en(samples);
+            (void)sig_en;
+            return 10 * log10(noise_en);
         }
 
         void frame_sync_impl::noise_est_handler(pmt::pmt_t noise_est)
