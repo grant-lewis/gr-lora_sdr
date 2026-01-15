@@ -465,10 +465,13 @@ namespace gr
             for (int k = 0; k < n_strong_bins; ++k) {
                 sig_en += fft_mag[k];  // first bins
             }
-            for (int k = 0; k < n_strong_bins; ++k) {
-                sig_en += fft_mag[m_number_of_bins - 1 - k];  // last bins
+            // n = 1 first bin only; n > 1 first n and last n bins
+            if(n_strong_bins>1){
+                for (int k = 0; k < n_strong_bins; ++k) {
+                    sig_en += fft_mag[m_number_of_bins - 1 - k];  // last bins
+                }
             }
-
+            
             double noise_en = tot_en - sig_en;
             if (noise_en <= 0.0)
                 noise_en = std::numeric_limits<float>::min(); // avoid division by zero later
