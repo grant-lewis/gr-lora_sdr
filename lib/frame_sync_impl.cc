@@ -14,15 +14,15 @@ namespace gr
     {
 
         frame_sync::sptr
-        frame_sync::make(uint32_t center_freq, uint32_t bandwidth, uint8_t sf, bool impl_head, std::vector<uint16_t> sync_word, uint8_t os_factor, uint16_t preamble_len = 8)
+        frame_sync::make(uint32_t center_freq, uint32_t bandwidth, uint8_t sf, bool impl_head, std::vector<uint16_t> sync_word, uint8_t os_factor, uint16_t preamble_len, uint32_t multibin_bins)
         {
-            return gnuradio::get_initial_sptr(new frame_sync_impl(center_freq, bandwidth, sf, impl_head, sync_word, os_factor, preamble_len));
+            return gnuradio::get_initial_sptr(new frame_sync_impl(center_freq, bandwidth, sf, impl_head, sync_word, os_factor, preamble_len, multibin_bins));
         }
 
         /*
          * The private constructor
          */
-        frame_sync_impl::frame_sync_impl(uint32_t center_freq, uint32_t bandwidth, uint8_t sf, bool impl_head, std::vector<uint16_t> sync_word, uint8_t os_factor, uint16_t preamble_len)
+        frame_sync_impl::frame_sync_impl(uint32_t center_freq, uint32_t bandwidth, uint8_t sf, bool impl_head, std::vector<uint16_t> sync_word, uint8_t os_factor, uint16_t preamble_len, uint32_t multibin_bins)
             : gr::block("frame_sync",
                         gr::io_signature::make(1, 1, sizeof(gr_complex)),
                         gr::io_signature::make3(1, 3, sizeof(gr_complex), sizeof(float), sizeof(gr_complex))
@@ -50,6 +50,7 @@ namespace gr
 
             m_impl_head = impl_head;
 
+            m_multibin_bins = multibin_bins;
             // Convert given sync word into the two modulated values in preamble
             if (m_sync_words.size() == 1)
             {
@@ -93,6 +94,9 @@ namespace gr
             message_port_register_in(pmt::mp("noise_est"));
             set_msg_handler(pmt::mp("noise_est"), [this](pmt::pmt_t msg)
                             { this->noise_est_handler(msg); });
+            message_port_register_in(pmt::mp("multibin_bins"));
+            set_msg_handler(pmt::mp("multibin_bins"),
+                [this](pmt::pmt_t msg) { this->multibin_bins_handler(msg); });
 
 #ifdef GRLORA_DEBUG
             preamb_file.open("../../matlab/SFO/preamb.txt", std::ios::out | std::ios::trunc);
@@ -422,7 +426,7 @@ namespace gr
             return {static_cast<float>(sig_en), static_cast<float>(noise_en)};
         }
 
-        // Helper: sum energy in first/last n_strong_bins FFT bins
+        // Sum energy in first/last n FFT bins
         std::pair<float,float>
         frame_sync_impl::sig_noise_en(const gr_complex *samples, int n_strong_bins)
         {
@@ -499,6 +503,30 @@ namespace gr
         {
             m_noise_est = pmt::to_double(noise_est);
         }
+
+        void frame_sync_impl::multibin_bins_handler(pmt::pmt_t msg)
+        {
+            long v;
+
+            if (pmt::is_integer(msg)) {
+                v = pmt::to_long(msg);
+            } else if (pmt::is_dict(msg)) {
+                // allow dict messages too, e.g. {"multibin_bins": 128}
+                pmt::pmt_t key = pmt::intern("multibin_bins");
+                if (!pmt::dict_has_key(msg, key)) return;
+                v = pmt::to_long(pmt::dict_ref(msg, key, pmt::PMT_NIL));
+            } else {
+                return;
+            }
+
+            // clamp (edge-bin estimator only meaningful up to N/2)
+            if (v < 1) v = 1;
+            if (m_number_of_bins > 0 && v > long(m_number_of_bins/2)) v = m_number_of_bins/2;
+
+            m_multibin_bins = (uint32_t)v;
+        }
+
+
         void frame_sync_impl::frame_info_handler(pmt::pmt_t frame_info)
         {
             pmt::pmt_t err = pmt::string_to_symbol("error");
@@ -809,9 +837,9 @@ namespace gr
                     float multibin_noise_est = 0;
                     for (int i = 0; i < up_symb_to_use; i++)
                     {
-                        multibin_snr_est += determine_snr(&corr_preamb[i * m_number_of_bins],512);
-                        multibin_sig_est += determine_sig(&corr_preamb[i * m_number_of_bins],512);
-                        multibin_noise_est += determine_noise(&corr_preamb[i * m_number_of_bins],512);                                            
+                        multibin_snr_est     += determine_snr(&corr_preamb[i * m_number_of_bins], m_multibin_bins);
+                        multibin_sig_est     += determine_sig(&corr_preamb[i * m_number_of_bins], m_multibin_bins);
+                        multibin_noise_est   += determine_noise(&corr_preamb[i * m_number_of_bins], m_multibin_bins);                   
                     }
                     multibin_snr_est /= up_symb_to_use;
                     multibin_sig_est /= up_symb_to_use;

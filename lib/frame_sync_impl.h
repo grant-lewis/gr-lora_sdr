@@ -51,6 +51,7 @@ namespace gr
       uint8_t m_invalid_header;           ///< invalid header checksum
       bool m_impl_head;                   ///< use implicit header mode
       uint8_t m_os_factor;                ///< oversampling factor
+      uint32_t m_multibin_bins;  ///< number of bins used for multibin SNR/sig/noise estimates
       std::vector<uint16_t> m_sync_words; ///< vector containing the two sync words (network identifiers)
       bool m_ldro;                        ///< use of low datarate optimisation mode
 
@@ -168,6 +169,7 @@ namespace gr
       /**
           *  \brief  Set new SF received in a tag (used for CRAN)
           */
+      void multibin_bins_handler(pmt::pmt_t msg);   
       void set_sf(int sf);
 
       std::pair<float, float> sig_noise_en(const gr_complex *samples, int n_strong_bins);
@@ -178,7 +180,9 @@ namespace gr
       float determine_noise(const gr_complex *samples, int n_strong_bins);
 
     public:
-      frame_sync_impl(uint32_t center_freq, uint32_t bandwidth, uint8_t sf, bool impl_head, std::vector<uint16_t> sync_word, uint8_t os_factor, uint16_t preamb_len);
+      frame_sync_impl(uint32_t center_freq, uint32_t bandwidth, uint8_t sf, bool impl_head,
+                std::vector<uint16_t> sync_word, uint8_t os_factor, uint16_t preamb_len,
+                uint32_t multibin_bins);
       ~frame_sync_impl();
 
       // Where all the action really happens

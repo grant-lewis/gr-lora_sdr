@@ -38,7 +38,7 @@ void bind_frame_sync(py::module &m) {
 
       .def(py::init(&frame_sync::make), py::arg("center_freq"),
            py::arg("bandwidth"), py::arg("sf"), py::arg("impl_head"),
-           py::arg("sync_word"), py::arg("os_factor"), py::arg("preamble_len"),
+           py::arg("sync_word"), py::arg("os_factor"), py::arg("preamble_len"), py::arg("multibin_bins"),
            D(frame_sync, make))
 
       ;
