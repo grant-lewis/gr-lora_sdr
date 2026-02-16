@@ -9,7 +9,7 @@ This fork modifies the `gr-lora_sdr` Frame Sync block to:
 </p>
 
 ### Modifications
-- `multibin_bins`: Runtime control input that updates the number of edge bins used by the multibin SNR estimator  
+- `multibin_bins`: Runtime message input that controls the number of edge bins used by the multibin SNR estimator  
   - e.g., PMT message "4" uses the first 4 plus last 4 bins when computing signal energy.
 - `fft_preamble`: FFT of the first dechirped preamble symbol as it arrives (complex stream)
 - **`log`: Extended output stream (float) - the multibin SNR computations (alongside the existing sync/SNR-related measurements) are accessible here**. See the block documentation for the output order.
