@@ -14,9 +14,6 @@ This fork modifies the `gr-lora_sdr` Frame Sync block to:
 - `fft_preamble`: FFT of the first dechirped preamble symbol as it arrives (complex stream)
 - **`log`: Extended output stream (float) - the multibin SNR computations (alongside the existing sync/SNR-related measurements) are accessible here**. See the block documentation for the output order.
 
-### Current Issue(s)
-- “Single-bin” SNR uses the 1st and last FFT bins (not just the 1st).
-
 ## gr-lora_sdr
 See: https://github.com/tapparelj/gr-lora_sdr
 
